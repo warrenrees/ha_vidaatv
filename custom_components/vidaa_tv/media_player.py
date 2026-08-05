@@ -186,6 +186,20 @@ class VidaaTVMediaPlayer(CoordinatorEntity[VidaaTVDataUpdateCoordinator], MediaP
             return None
         return self.coordinator.data.get("app")
 
+    @property
+    def media_title(self) -> str | None:
+        """Return the channel name while watching live TV."""
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.get("channel_name")
+
+    @property
+    def media_channel(self) -> str | None:
+        """Return the channel number while watching live TV."""
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.get("channel_number")
+
     async def async_added_to_hass(self) -> None:
         """Run when entity is added to hass."""
         await super().async_added_to_hass()

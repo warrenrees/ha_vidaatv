@@ -69,6 +69,48 @@ async def test_coordinator_update_tv_off(
     assert coordinator.data["is_on"] is False
 
 
+async def test_coordinator_live_tv_reports_source_and_channel(
+    hass: HomeAssistant,
+    mock_vidaa_tv: MagicMock,
+) -> None:
+    """A 'livetv' state must yield a source and the channel being watched.
+
+    Payload captured verbatim from a 32A35HUV on 2026-08-04. Before 'livetv'
+    was handled, watching a channel - the commonest thing a TV does - left both
+    app and source None, so the UI showed no source at all.
+    """
+    mock_vidaa_tv.async_get_state = AsyncMock(
+        return_value={
+            "statetype": "livetv",
+            "list_param": "400001",
+            "channel_num": "5001",
+            "channel_param": "#90546647#400001#100",
+            "channel_name": "ROMCOM K-Drama",
+            "sourceid": "TV",
+        }
+    )
+
+    entry = create_mock_config_entry(hass)
+    entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.vidaa_tv.AsyncVidaaTV",
+        return_value=mock_vidaa_tv,
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    data = entry.runtime_data.coordinator.data
+    assert data["is_on"] is True
+    assert data["statetype"] == "livetv"
+    # sourceid, not displayname: the source list is built from sourcename, and
+    # this entry's displayname ("TV Channels") would match nothing in it.
+    assert data["source"] == "TV"
+    assert data["channel_name"] == "ROMCOM K-Drama"
+    assert data["channel_number"] == "5001"
+    assert data["app"] is None
+
+
 async def test_coordinator_custom_scan_interval(
     hass: HomeAssistant,
     mock_vidaa_tv: MagicMock,

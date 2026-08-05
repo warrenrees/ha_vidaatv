@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (Library/protocol changes are tracked separately in the [`pyvidaa`](https://github.com/warrenrees/pyvidaa) repository.)
 
+## [Unreleased]
+
+### Fixed
+
+- **No source was shown while watching live TV.** The TV reports watching a
+  channel as `statetype: livetv`, which was not handled — only `app` and
+  `sourceswitch` were — so both the source and the app came back empty for the
+  single most common thing a television does. The source now reads `TV`, and
+  the channel name and number the TV already sends are exposed as the media
+  title and channel. Captured from a live set; three different channels were
+  recorded to confirm the payload shape.
+
 ## [2.1.2]
 
 ### Fixed (second round)

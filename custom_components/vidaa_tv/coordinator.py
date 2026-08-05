@@ -203,6 +203,8 @@ class VidaaTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "is_muted": False,
             "app": None,
             "source": None,
+            "channel_name": None,
+            "channel_number": None,
         }
 
     async def _async_update_data(self) -> dict[str, Any]:
@@ -284,13 +286,18 @@ class VidaaTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # State contains 'statetype' which indicates current activity:
             # - 'app': running an app (has 'name', 'url', 'appId' fields)
             # - 'sourceswitch': watching a source (has 'sourceid', 'sourcename' fields)
+            # - 'livetv': watching a channel (has 'channel_name', 'channel_num',
+            #   'sourceid'; note it carries NO sourcename or displayname)
             # - 'remote_launcher': at home screen
+            # - 'remote_setting': a settings menu is open
             # - 'fake_sleep_0': TV is off/sleeping
             statetype = state.get("statetype") if state else None
 
             # Extract current app or source based on statetype
             app = None
             source = None
+            channel_name = None
+            channel_number = None
             if state:
                 if statetype == "app":
                     app_key = state.get("name", "").lower()
@@ -302,6 +309,16 @@ class VidaaTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         app = state.get("name", "").capitalize()
                 elif statetype == "sourceswitch":
                     source = state.get("displayname") or state.get("sourcename")
+                elif statetype == "livetv":
+                    # Watching a channel - the most common state a TV is in, and
+                    # previously unhandled, so both app and source came back None
+                    # and the UI showed no source at all. Use sourceid ("TV"),
+                    # which is what sourcelist reports as sourcename and so is
+                    # what source_list is built from; displayname would be
+                    # "TV Channels" and match nothing in the list.
+                    source = state.get("sourceid")
+                    channel_name = state.get("channel_name") or None
+                    channel_number = state.get("channel_num") or None
 
             data = {
                 "is_on": is_on,
@@ -311,10 +328,13 @@ class VidaaTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "is_muted": is_muted,
                 "app": app,
                 "source": source,
+                "channel_name": channel_name,
+                "channel_number": channel_number,
             }
 
-            _LOGGER.debug("State data: is_on=%s, statetype=%s, volume=%s, app=%s, source=%s",
-                         is_on, statetype, volume, app, source)
+            _LOGGER.debug("State data: is_on=%s, statetype=%s, volume=%s, app=%s, "
+                          "source=%s, channel=%s",
+                         is_on, statetype, volume, app, source, channel_name)
             _LOGGER.debug("Total update took %.2fs", time.monotonic() - start)
             # A poll got through, so any earlier auth trouble is behind us.
             self._auth_failures = 0
