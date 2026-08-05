@@ -72,6 +72,11 @@ ATTR_KEY: Final = "key"
 ATTR_APP: Final = "app"
 
 # States
+# The statetype a TV reports while in standby. Match it EXACTLY: the trailing
+# digit is a direction, not a sleep depth. Captured from a real TV, pressing
+# power sends fake_sleep_0 going into standby and fake_sleep_1 coming out of it
+# (immediately followed by remote_launcher), so treating "fake_sleep*" as
+# asleep would report the TV off at the moment it is being switched on.
 STATE_FAKE_SLEEP: Final = "fake_sleep_0"
 STATE_REMOTE_LAUNCHER: Final = "remote_launcher"  # TV at the home screen
 

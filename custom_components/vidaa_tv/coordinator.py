@@ -259,9 +259,9 @@ class VidaaTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 state = await self.tv.async_get_state(timeout=3)
             _LOGGER.debug("get_state took %.2fs, raw state: %s", time.monotonic() - state_start, state)
 
-            # Determine power state. No reply at all means the TV is off: it
-            # answers in ~100ms while awake, and this firmware does not
-            # broadcast fake_sleep_0 - it simply stops responding.
+            # Determine power state. STATE_FAKE_SLEEP is matched exactly on
+            # purpose: fake_sleep_1 is what the TV sends while WAKING, so a
+            # prefix match would report it off just as it is switched on.
             is_on = bool(state) and state.get("statetype") != STATE_FAKE_SLEEP
 
             # Get volume and mute status (only if TV is on)
