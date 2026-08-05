@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-08-04
+
+Requires `pyvidaa` 2.3.0.
+
+**If you installed from the repository between 2.1.2 and this release**, the
+manifest pinned `pyvidaa==2.2.7` — a version that was declared but never
+published to PyPI, so the dependency could not be installed. This release pins
+a version that exists.
+
+### Added
+
+- The channel being watched is exposed as the media title and channel number.
+
 ### Fixed
 
 - **No source was shown while watching live TV.** The TV reports watching a
