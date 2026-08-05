@@ -11,13 +11,15 @@
       },
       "certs": {
         "title": "SSL Certificates",
-        "description": "The TV requires client certificates for mTLS authentication. Place the certificate files in `{cert_dir}/` or specify custom paths below.\n\nRequired files: `{cert_file}` and `{key_file}`",
+        "description": "Most TVs require client certificates for mTLS authentication. Place the certificate files in `{cert_dir}/` or specify custom paths below.\n\nRequired files: `{cert_file}` and `{key_file}`\n\nOlder TVs expose a plain, unencrypted MQTT broker and reject TLS - for those, turn off \"Use SSL/TLS\" and no certificates are needed.",
         "data": {
+          "use_ssl": "Use SSL/TLS",
           "certfile": "Certificate file path",
           "keyfile": "Key file path",
           "auth_mode": "Authentication mode"
         },
         "data_description": {
+          "use_ssl": "Leave on for the usual encrypted connection. Turn off only if setup fails to connect and your TV runs older firmware that speaks plain MQTT - then the certificate paths below are ignored and the static login is used automatically.",
           "auth_mode": "How credentials are generated. \"Auto\" detects your TV's protocol version and falls back if the TV rejects it. Choose \"Static\" if your TV runs older firmware and setup fails with a not-authorized error; \"Dynamic\" forces the newer scheme."
         }
       },

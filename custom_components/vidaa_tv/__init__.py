@@ -27,10 +27,12 @@ from .const import (
     CONF_CERTFILE,
     CONF_HW_MAC,
     CONF_KEYFILE,
+    CONF_USE_SSL,
     CONF_MAC_ETHERNET,
     CONF_MAC_WIFI,
     DEFAULT_AUTH_MODE,
     DEFAULT_PORT,
+    DEFAULT_USE_SSL,
     PLATFORMS,
     SERVICE_SEND_KEY,
     SERVICE_LAUNCH_APP,
@@ -78,6 +80,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: VidaaTVConfigEntry) -> b
     brand = entry.data.get(CONF_BRAND, "his")
     certfile = entry.data.get(CONF_CERTFILE)
     keyfile = entry.data.get(CONF_KEYFILE)
+    # Entries paired before this option existed default to SSL (their original
+    # behavior); plain-MQTT TVs store it False and skip TLS entirely.
+    use_ssl = entry.data.get(CONF_USE_SSL, DEFAULT_USE_SSL)
     # An options-flow override wins over the scheme the entry paired with.
     # Entries created before this option existed have neither, and get "auto".
     auth_mode = entry.options.get(
@@ -90,6 +95,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: VidaaTVConfigEntry) -> b
     tv = AsyncVidaaTV(
         host=host,
         port=port,
+        use_ssl=use_ssl,
         certfile=certfile,
         keyfile=keyfile,
         mac_address=mac or device_id,

@@ -43,10 +43,12 @@ from .const import (
     CONF_SW_VERSION,
     CONF_CERTFILE,
     CONF_KEYFILE,
+    CONF_USE_SSL,
     AUTH_MODES,
     AUTH_MODE_AUTO,
     AUTH_MODE_STATIC,
     DEFAULT_AUTH_MODE,
+    DEFAULT_USE_SSL,
     DEFAULT_NAME,
     DEFAULT_PORT,
     DEFAULT_CERT_DIR,
@@ -170,6 +172,7 @@ async def validate_connection(
     mac_address: str | None = None,
     brand: str = "his",
     auth_mode: str = DEFAULT_AUTH_MODE,
+    use_ssl: bool = DEFAULT_USE_SSL,
 ) -> dict[str, Any]:
     """Validate we can connect to the TV."""
     # Resolve the TV's real MAC. Dynamic-auth credentials are a hash of it and
@@ -193,6 +196,7 @@ async def validate_connection(
     tv = AsyncVidaaTV(
         host=host,
         port=port,
+        use_ssl=use_ssl,
         certfile=certfile,
         keyfile=keyfile,
         mac_address=mac,
@@ -278,6 +282,7 @@ class VidaaTVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._discovery_info: SsdpServiceInfo | None = None
         self._certfile: str | None = None
         self._keyfile: str | None = None
+        self._use_ssl: bool = DEFAULT_USE_SSL
         self._auth_mode: str = DEFAULT_AUTH_MODE
         self._mac_ethernet: str | None = None
         self._mac_wifi: str | None = None
@@ -394,12 +399,31 @@ class VidaaTVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         default_certfile, default_keyfile = get_default_cert_paths(self.hass)
 
         if user_input is not None:
-            self._certfile = user_input.get(CONF_CERTFILE) or default_certfile
-            self._keyfile = user_input.get(CONF_KEYFILE) or default_keyfile
+            self._use_ssl = user_input.get(CONF_USE_SSL, DEFAULT_USE_SSL)
             self._auth_mode = user_input.get(CONF_AUTH_MODE) or DEFAULT_AUTH_MODE
 
+            # Plain MQTT only ever pairs with the fixed static login: "auto"
+            # probes a protocol version the plain broker never serves and then
+            # falls back to dynamic, which it rejects, and plain dynamic (PIN)
+            # TVs do not exist. So plain implies static - the user can just turn
+            # SSL off and leave auth on "Auto" without also picking "Static".
+            if not self._use_ssl and self._auth_mode == AUTH_MODE_AUTO:
+                self._auth_mode = AUTH_MODE_STATIC
+
+            # Plain-MQTT TVs need no client certificates - skip the file check
+            # and connect unencrypted. Otherwise require the cert/key pair for
+            # the mutual-TLS handshake the encrypted broker expects.
+            if self._use_ssl:
+                self._certfile = user_input.get(CONF_CERTFILE) or default_certfile
+                self._keyfile = user_input.get(CONF_KEYFILE) or default_keyfile
+                certs_ok = check_certs_exist(self._certfile, self._keyfile)
+            else:
+                self._certfile = None
+                self._keyfile = None
+                certs_ok = True
+
             # Validate cert paths
-            if not check_certs_exist(self._certfile, self._keyfile):
+            if not certs_ok:
                 errors["base"] = "certs_not_found"
             else:
                 # Try to connect with certs
@@ -410,6 +434,7 @@ class VidaaTVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         self._port,
                         certfile=self._certfile,
                         keyfile=self._keyfile,
+                        use_ssl=self._use_ssl,
                         mac_address=self._mac if self._mac_resolved else None,
                         auth_mode=self._auth_mode,
                     )
@@ -466,6 +491,7 @@ class VidaaTVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="certs",
             data_schema=vol.Schema(
                 {
+                    vol.Optional(CONF_USE_SSL, default=self._use_ssl): bool,
                     vol.Optional(CONF_CERTFILE, default=default_certfile): str,
                     vol.Optional(CONF_KEYFILE, default=default_keyfile): str,
                     vol.Optional(
@@ -598,6 +624,9 @@ class VidaaTVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._port = entry_data.get(CONF_PORT, DEFAULT_PORT)
         self._certfile = entry_data.get(CONF_CERTFILE)
         self._keyfile = entry_data.get(CONF_KEYFILE)
+        # Entries paired before this option existed have no value stored and
+        # default to SSL, matching their original (encrypted) behavior.
+        self._use_ssl = entry_data.get(CONF_USE_SSL, DEFAULT_USE_SSL)
         self._device_id = entry_data.get(CONF_DEVICE_ID)
         # Entries paired before this option existed have no value stored.
         self._auth_mode = entry_data.get(CONF_AUTH_MODE) or DEFAULT_AUTH_MODE
@@ -624,6 +653,57 @@ class VidaaTVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="reauth_confirm",
             description_placeholders={"host": self._host},
         )
+
+    async def _create_entry_from_current_state(self) -> FlowResult:
+        """Persist the config entry from the flow's current device state.
+
+        Shared by the PIN-auth success path and the no-auth path (TVs that
+        connect and answer without ever showing a PIN), so both build
+        identical entry data. All device fields are read from self, having
+        been populated by validation/pairing before this is called.
+        """
+        new_data = {
+            CONF_HOST: self._host,
+            CONF_PORT: self._port,
+            CONF_NAME: self._name,
+            CONF_DEVICE_ID: self._device_id,
+            CONF_MAC: self._mac,  # New MAC used for auth
+            # Only when it really came from the TV: Wake-on-LAN aimed at a
+            # random placeholder wakes nothing.
+            CONF_HW_MAC: self._mac if self._mac_resolved else None,
+            CONF_MAC_ETHERNET: self._mac_ethernet,
+            CONF_MAC_WIFI: self._mac_wifi,
+            CONF_MODEL: self._model,
+            CONF_BRAND: self._brand or "his",
+            CONF_SW_VERSION: self._sw_version,
+            CONF_CERTFILE: self._certfile,
+            CONF_KEYFILE: self._keyfile,
+            CONF_USE_SSL: self._use_ssl,
+            CONF_AUTH_MODE: self._auth_mode,
+        }
+
+        # Handle reauth - update existing entry
+        if self.source == config_entries.SOURCE_REAUTH:
+            # Merge, never replace. Reauth re-derives only what it can see, and
+            # it usually runs against a TV that is misbehaving or asleep - so a
+            # probe miss would otherwise null out the stored MACs, model and
+            # firmware, taking Wake-on-LAN down with them.
+            entry = self._get_reauth_entry()
+            merged = {
+                **entry.data,
+                **{k: v for k, v in new_data.items() if v is not None},
+            }
+            return self.async_update_reload_and_abort(entry, data=merged)
+
+        # Set unique ID to prevent duplicates
+        if self._device_id:
+            await self.async_set_unique_id(self._device_id)
+            self._abort_if_unique_id_configured(
+                updates={CONF_HOST: self._host, CONF_PORT: self._port}
+            )
+
+        # Create the config entry
+        return self.async_create_entry(title=self._name, data=new_data)
 
     async def async_step_pair(
         self, user_input: dict[str, Any] | None = None
@@ -686,51 +766,7 @@ class VidaaTVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             "continuing - the integration will fetch it after setup"
                         )
 
-                    new_data = {
-                        CONF_HOST: self._host,
-                        CONF_PORT: self._port,
-                        CONF_NAME: self._name,
-                        CONF_DEVICE_ID: self._device_id,
-                        CONF_MAC: self._mac,  # New MAC used for auth
-                        # Only when it really came from the TV: Wake-on-LAN
-                        # aimed at a random placeholder wakes nothing.
-                        CONF_HW_MAC: self._mac if self._mac_resolved else None,
-                        CONF_MAC_ETHERNET: self._mac_ethernet,
-                        CONF_MAC_WIFI: self._mac_wifi,
-                        CONF_MODEL: self._model,
-                        CONF_BRAND: self._brand or "his",
-                        CONF_SW_VERSION: self._sw_version,
-                        CONF_CERTFILE: self._certfile,
-                        CONF_KEYFILE: self._keyfile,
-                        CONF_AUTH_MODE: self._auth_mode,
-                    }
-
-                    # Handle reauth - update existing entry
-                    if self.source == config_entries.SOURCE_REAUTH:
-                        # Merge, never replace. Reauth re-derives only what it
-                        # can see, and it usually runs against a TV that is
-                        # misbehaving or asleep - so a probe miss would
-                        # otherwise null out the stored MACs, model and
-                        # firmware, taking Wake-on-LAN down with them.
-                        entry = self._get_reauth_entry()
-                        merged = {
-                            **entry.data,
-                            **{k: v for k, v in new_data.items() if v is not None},
-                        }
-                        return self.async_update_reload_and_abort(entry, data=merged)
-
-                    # Set unique ID to prevent duplicates
-                    if self._device_id:
-                        await self.async_set_unique_id(self._device_id)
-                        self._abort_if_unique_id_configured(
-                            updates={CONF_HOST: self._host, CONF_PORT: self._port}
-                        )
-
-                    # Create the config entry
-                    return self.async_create_entry(
-                        title=self._name,
-                        data=new_data,
-                    )
+                    return await self._create_entry_from_current_state()
 
                 # Auth failed. Drop the (now stale) session; the block below
                 # re-triggers a fresh PIN so the user can try again.
@@ -812,6 +848,7 @@ class VidaaTVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             tv = AsyncVidaaTV(
                 host=self._host,
                 port=self._port,
+                use_ssl=self._use_ssl,
                 certfile=self._certfile,
                 keyfile=self._keyfile,
                 mac_address=self._mac,
@@ -827,6 +864,38 @@ class VidaaTVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     # "auto" may have landed on a different scheme than the one
                     # we came in with; record it so the entry stores what works.
                     self._auth_mode = tv.auth_mode or self._auth_mode
+                    # A TV that needs no authentication (already authorized, or
+                    # older firmware with a fixed static login) never shows a
+                    # PIN and rejects any code entered - so asking for one would
+                    # strand setup. Create the entry straight away, best-effort
+                    # enriching it with whatever device info this session serves.
+                    if not tv.needs_authentication():
+                        device_info = None
+                        try:
+                            for _attempt in range(3):
+                                device_info = await tv.async_get_device_info(
+                                    timeout=5
+                                )
+                                if device_info:
+                                    break
+                                await asyncio.sleep(1)
+                        except Exception as err:  # noqa: BLE001 - best effort
+                            _LOGGER.debug("Device info fetch failed: %s", err)
+                        if device_info:
+                            self._device_id = (
+                                device_info.get("network_type") or self._device_id
+                            )
+                            self._model = (
+                                device_info.get("model_name") or self._model
+                            )
+                            self._sw_version = (
+                                device_info.get("tv_version") or self._sw_version
+                            )
+                            if device_info.get("tv_name"):
+                                self._name = device_info.get("tv_name")
+                        await tv.async_disconnect()
+                        self._pairing_tv = None
+                        return await self._create_entry_from_current_state()
                     # Wait for the TV to confirm the dialog is actually on
                     # screen rather than assuming it appeared - otherwise we
                     # ask for a PIN the user cannot see.

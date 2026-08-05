@@ -24,6 +24,11 @@ CONF_BRAND: Final = "brand"
 CONF_SW_VERSION: Final = "sw_version"
 CONF_CERTFILE: Final = "certfile"
 CONF_KEYFILE: Final = "keyfile"
+# Whether to connect over SSL/TLS. Some older TVs (transport_protocol < 1001)
+# expose a plain, unencrypted MQTT broker on the same port and reset the
+# connection on any TLS ClientHello, so mTLS can never succeed against them.
+# Turning this off lets those TVs pair without client certificates.
+CONF_USE_SSL: Final = "use_ssl"
 CONF_AUTH_MODE: Final = "auth_mode"
 
 # Credential scheme. "auto" detects the TV's protocol version and falls back
@@ -40,6 +45,8 @@ AUTH_MODES: Final = [AUTH_MODE_AUTO, AUTH_MODE_DYNAMIC, AUTH_MODE_STATIC]
 DEFAULT_PORT: Final = 36669
 DEFAULT_NAME: Final = "Hisense TV"
 DEFAULT_AUTH_MODE: Final = AUTH_MODE_AUTO
+# Most TVs speak MQTT over TLS; plain MQTT is the exception, so default to on.
+DEFAULT_USE_SSL: Final = True
 
 # Default certificate paths (relative to HA config directory)
 DEFAULT_CERT_DIR: Final = "certs"
