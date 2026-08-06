@@ -16,9 +16,11 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from pyvidaa import APPS
 from pyvidaa.wol import wake_tv
 from .const import (
+    ACTIVITY_HOME,
     DOMAIN,
     SCAN_INTERVAL,
     STATE_FAKE_SLEEP,
+    STATE_REMOTE_LAUNCHER,
     CONF_DEVICE_ID,
     CONF_HOST,
     CONF_HW_MAC,
@@ -293,7 +295,14 @@ class VidaaTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # - 'fake_sleep_0': TV is off/sleeping
             statetype = state.get("statetype") if state else None
 
-            # Extract current app or source based on statetype
+            # Extract current app or source based on statetype.
+            #
+            # Every branch that can name what the TV is showing sets "source",
+            # because a consumer that cannot match it against source_list has to
+            # guess - Home Assistant's HomeKit bridge, for one, falls back to
+            # source_list[0] and so reported whichever app happened to be first
+            # no matter what the TV was doing. The names below are whatever the
+            # TV said; the media player maps them onto its own list.
             app = None
             source = None
             channel_name = None
@@ -307,18 +316,30 @@ class VidaaTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     else:
                         # Fallback: capitalize first letter
                         app = state.get("name", "").capitalize()
+                    # A running app is also the selected source: apps are in
+                    # source_list and select_source already launches them, so
+                    # reporting one round-trips.
+                    source = app
                 elif statetype == "sourceswitch":
+                    # displayname first, on purpose: it carries the name the
+                    # owner gave the input on the TV ("PlayStation"), which is
+                    # what source_list is labelled with. sourcename ("HDMI2") is
+                    # only the fallback, and is mapped back to this label.
                     source = state.get("displayname") or state.get("sourcename")
                 elif statetype == "livetv":
                     # Watching a channel - the most common state a TV is in, and
                     # previously unhandled, so both app and source came back None
-                    # and the UI showed no source at all. Use sourceid ("TV"),
-                    # which is what sourcelist reports as sourcename and so is
-                    # what source_list is built from; displayname would be
-                    # "TV Channels" and match nothing in the list.
+                    # and the UI showed no source at all. livetv carries no
+                    # sourcename or displayname, so report sourceid ("TV"); the
+                    # media player resolves it to the matching list entry.
                     source = state.get("sourceid")
                     channel_name = state.get("channel_name") or None
                     channel_number = state.get("channel_num") or None
+                elif statetype == STATE_REMOTE_LAUNCHER:
+                    # The home screen is a real place to be, not an absent
+                    # source. Naming it stops consumers falling back to a
+                    # wrong input while the TV sits on the launcher.
+                    source = ACTIVITY_HOME
 
             data = {
                 "is_on": is_on,

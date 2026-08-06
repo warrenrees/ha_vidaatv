@@ -13,6 +13,7 @@ from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from custom_components.vidaa_tv.coordinator import VidaaTVDataUpdateCoordinator
 from custom_components.vidaa_tv.const import (
+    ACTIVITY_HOME,
     CONF_HW_MAC,
     CONF_MAC_ETHERNET,
     CONF_MAC_WIFI,
@@ -103,11 +104,96 @@ async def test_coordinator_live_tv_reports_source_and_channel(
     data = entry.runtime_data.coordinator.data
     assert data["is_on"] is True
     assert data["statetype"] == "livetv"
-    # sourceid, not displayname: the source list is built from sourcename, and
-    # this entry's displayname ("TV Channels") would match nothing in it.
+    # livetv carries no sourcename or displayname, only sourceid; the media
+    # player resolves it to the matching source_list entry.
     assert data["source"] == "TV"
     assert data["channel_name"] == "ROMCOM K-Drama"
     assert data["channel_number"] == "5001"
+    assert data["app"] is None
+
+
+async def _state_data(
+    hass: HomeAssistant, mock_vidaa_tv: MagicMock, state: dict
+) -> dict:
+    """Set up the integration against one TV state and return the poll result."""
+    mock_vidaa_tv.async_get_state = AsyncMock(return_value=state)
+
+    entry = create_mock_config_entry(hass)
+    entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.vidaa_tv.AsyncVidaaTV",
+        return_value=mock_vidaa_tv,
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    return entry.runtime_data.coordinator.data
+
+
+async def test_coordinator_running_app_is_also_the_source(
+    hass: HomeAssistant,
+    mock_vidaa_tv: MagicMock,
+) -> None:
+    """A running app is the selected source, not just an app name.
+
+    Leaving source empty meant a consumer that has to name the current input
+    could not; Home Assistant's HomeKit bridge falls back to source_list[0],
+    which is how a TV on HDMI 2 came out as "Netflix".
+    """
+    data = await _state_data(
+        hass,
+        mock_vidaa_tv,
+        {"statetype": "app", "name": "netflix", "url": "netflix://"},
+    )
+
+    assert data["app"] == "Netflix"
+    assert data["source"] == "Netflix"
+
+
+async def test_coordinator_sourceswitch_prefers_the_display_name(
+    hass: HomeAssistant,
+    mock_vidaa_tv: MagicMock,
+) -> None:
+    """displayname carries the name the owner gave the input on the TV."""
+    data = await _state_data(
+        hass,
+        mock_vidaa_tv,
+        {
+            "statetype": "sourceswitch",
+            "sourceid": "4",
+            "sourcename": "HDMI2",
+            "displayname": "PlayStation",
+        },
+    )
+
+    assert data["source"] == "PlayStation"
+    assert data["app"] is None
+
+
+async def test_coordinator_sourceswitch_falls_back_to_sourcename(
+    hass: HomeAssistant,
+    mock_vidaa_tv: MagicMock,
+) -> None:
+    """A set that sends no displayname still names its input."""
+    data = await _state_data(
+        hass,
+        mock_vidaa_tv,
+        {"statetype": "sourceswitch", "sourceid": "4", "sourcename": "HDMI2"},
+    )
+
+    assert data["source"] == "HDMI2"
+
+
+async def test_coordinator_launcher_reports_home_as_the_source(
+    hass: HomeAssistant,
+    mock_vidaa_tv: MagicMock,
+) -> None:
+    """The home screen is a place to be, not an absent source."""
+    data = await _state_data(hass, mock_vidaa_tv, {"statetype": "remote_launcher"})
+
+    assert data["is_on"] is True
+    assert data["source"] == ACTIVITY_HOME
     assert data["app"] is None
 
 

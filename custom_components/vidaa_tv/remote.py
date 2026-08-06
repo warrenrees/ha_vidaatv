@@ -19,7 +19,6 @@ from .const import (
     CONF_SW_VERSION,
     DEFAULT_NAME,
     ACTIVITY_HOME,
-    STATE_REMOTE_LAUNCHER,
 )
 from .coordinator import VidaaTVDataUpdateCoordinator
 
@@ -151,18 +150,18 @@ class VidaaTVRemote(CoordinatorEntity[VidaaTVDataUpdateCoordinator], RemoteEntit
 
     @property
     def current_activity(self) -> str | None:
-        """Return current activity (app name, source, or the home screen)."""
+        """Return current activity (app name, source, or the home screen).
+
+        Guarded like is_on above: coordinator.data keeps its last value when an
+        update fails, and reporting the TV off while still naming what it was
+        watching is worse than naming nothing.
+        """
         data = self.coordinator.data
-        if not data:
+        if not data or not self.coordinator.available:
             return None
-        activity = data.get("app") or data.get("source")
-        if activity:
-            return activity
-        # At the launcher/home screen the TV reports neither an app nor a
-        # source; surface "Home" so the remote shows a current activity.
-        if data.get("is_on") and data.get("statetype") == STATE_REMOTE_LAUNCHER:
-            return ACTIVITY_HOME
-        return None
+        # The coordinator names the launcher "Home" itself, so it arrives as the
+        # source like any other.
+        return data.get("app") or data.get("source")
 
     @property
     def activity_list(self) -> list[str] | None:

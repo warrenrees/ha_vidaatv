@@ -161,10 +161,14 @@ def mock_vidaa_tv() -> Generator[MagicMock, None, None]:
             {"name": "YouTube", "appId": "youtube"},
         ]
     )
+    # sourceid values are the library's SOURCE_MAP ids (tv "0", hdmi1 "3",
+    # hdmi2 "4"), not a 1-based index; a TV entry is included because livetv
+    # names its source by sourceid alone.
     mock_instance.async_get_sources = AsyncMock(
         return_value=[
-            {"sourceid": 1, "sourcename": "HDMI1", "displayname": "HDMI 1"},
-            {"sourceid": 2, "sourcename": "HDMI2", "displayname": "HDMI 2"},
+            {"sourceid": "0", "sourcename": "TV", "displayname": "TV Channels"},
+            {"sourceid": "3", "sourcename": "HDMI1", "displayname": "HDMI 1"},
+            {"sourceid": "4", "sourcename": "HDMI2", "displayname": "HDMI 2"},
         ]
     )
 

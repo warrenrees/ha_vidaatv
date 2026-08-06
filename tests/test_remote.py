@@ -20,11 +20,32 @@ def _make_remote(data: dict | None) -> VidaaTVRemote:
 
 
 def test_current_activity_is_home_on_launcher() -> None:
-    """At the home screen (remote_launcher) the activity should be Home."""
+    """At the home screen the activity should be Home.
+
+    The coordinator names the launcher itself, so it arrives as the source like
+    any other - see test_coordinator_launcher_reports_home_as_the_source.
+    """
     remote = _make_remote(
-        {"is_on": True, "statetype": "remote_launcher", "app": None, "source": None}
+        {
+            "is_on": True,
+            "statetype": "remote_launcher",
+            "app": None,
+            "source": ACTIVITY_HOME,
+        }
     )
     assert remote.current_activity == ACTIVITY_HOME
+
+
+def test_current_activity_is_dropped_when_unavailable() -> None:
+    """A failed poll leaves the last data in place; do not report it as live."""
+    coordinator = MagicMock()
+    coordinator.data = {"is_on": True, "app": "Netflix", "source": "Netflix"}
+    coordinator.available = False
+    entry = MagicMock()
+    entry.data = {"device_id": "001122334455"}
+    entry.entry_id = "test_entry"
+
+    assert VidaaTVRemote(coordinator, entry).current_activity is None
 
 
 def test_current_activity_prefers_app_and_source() -> None:

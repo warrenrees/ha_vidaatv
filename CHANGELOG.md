@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-08-06
+
+Requires `pyvidaa` 2.3.0, unchanged from 2.2.0.
+
+### Fixed
+
+- **HomeKit showed the wrong input - a TV on HDMI 2 was reported as being on
+  Netflix.** The source the media player reported was frequently not one of the
+  entries in its own source list: a running app set no source at all, and an
+  HDMI input was named by the TV's `displayname` ("HDMI 2") while the list was
+  built from its `sourcename` ("HDMI2"). Home Assistant's HomeKit bridge falls
+  back to the *first* entry in the source list when it cannot match the current
+  source, so on a set whose source list came back empty - leaving only apps -
+  every state resolved to whichever app sorted first. The reported source is now
+  always one of the offered sources, so it can be matched.
+
+### Changed
+
+- **Inputs are listed under the names the TV shows.** An input renamed on the
+  TV now appears as that name ("PlayStation") rather than "HDMI2", and live TV
+  reads as the set's own label for it rather than the bare `TV` of 2.2.0.
+  Selecting a source still accepts the old names, so existing automations keep
+  working. HomeKit rebuilds the TV accessory once when the list changes.
+- The home screen is reported as a source of its own, "Home", and leads the
+  list - so a consumer that falls back to the first entry names somewhere the
+  TV might actually be.
+- A running app is reported as the current source as well as the app name.
+- An input the TV's source list never mentioned is learned from the TV's own
+  state, so a set that does not answer `sourcelist` can still show and select
+  the input it is on.
+- The source list is asked for again after each power-on. A single unanswered
+  request previously cost the list for as long as the integration stayed loaded.
+- The source, app, channel name and channel number are dropped while the TV is
+  unreachable, rather than continuing to report what it was last seen doing.
+
 ## [2.2.0] - 2026-08-04
 
 Requires `pyvidaa` 2.3.0.
