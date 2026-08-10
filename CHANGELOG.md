@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-08-10
+
+Requires `pyvidaa` 2.3.0, unchanged from 2.3.0.
+
+### Fixed
+
+- **First-time pairing never showed a PIN, and the TV was added broken -
+  `media_player` and `remote` stayed unavailable.** A regression in 2.2.0: the
+  no-auth skip consulted `needs_authentication()` right after connecting, but
+  the client only raises that flag once the TV has answered a pairing request -
+  which had not been sent yet - so every never-paired TV read as "already
+  authorized" and setup silently created an entry that had never authenticated.
+  Pairing is now requested first, so the check reflects what the TV actually
+  said; TVs that genuinely need no PIN still skip the form, at the cost of one
+  extra round trip. Reported and fixed by @timphealy (#9, #10).
+
+### Added
+
+- The test suite now runs in CI alongside hassfest and HACS validation. The
+  regression above passed every test while breaking every real first-time
+  pairing, so the suite also gained a test that models the client's actual
+  behaviour: `needs_authentication()` is only meaningful after
+  `start_pairing()` has asked the TV.
+
 ## [2.3.0] - 2026-08-06
 
 Requires `pyvidaa` 2.3.0, unchanged from 2.2.0.

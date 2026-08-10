@@ -163,6 +163,49 @@ async def test_user_flow_no_auth_skips_pin(
     mock_config_flow_tv.async_authenticate.assert_not_called()
 
 
+async def test_user_flow_auth_required_shows_pin_form(
+    hass: HomeAssistant,
+    mock_config_flow_tv: MagicMock,
+    mock_certs_exist: MagicMock,
+    mock_setup_entry: AsyncMock,
+) -> None:
+    """A TV that requires pairing is shown the PIN form, not silently added.
+
+    The mock mirrors the real client: needs_authentication() reads False
+    until start_pairing() has asked the TV to pair, and only flips once the
+    TV pushes the auth-required signal in response. A flow that consults it
+    any earlier sees False for every never-paired TV and creates an
+    unauthenticated entry with no PIN ever shown (issue #9).
+    """
+    paired = False
+
+    async def fake_start_pairing(*args: object, **kwargs: object) -> bool:
+        nonlocal paired
+        paired = True
+        return True  # the TV confirmed the PIN dialog is on screen
+
+    mock_config_flow_tv.async_start_pairing = AsyncMock(
+        side_effect=fake_start_pairing
+    )
+    mock_config_flow_tv.needs_authentication = MagicMock(
+        side_effect=lambda: paired
+    )
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_HOST: "192.168.1.100"},
+    )
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "pair"
+    # No entry may exist yet - the PIN has not been entered, let alone accepted.
+    mock_config_flow_tv.async_authenticate.assert_not_called()
+
+
 async def test_user_flow_cannot_connect(
     hass: HomeAssistant,
     mock_certs_exist: MagicMock,
