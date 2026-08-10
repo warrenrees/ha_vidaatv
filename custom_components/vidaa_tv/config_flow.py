@@ -864,6 +864,22 @@ class VidaaTVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     # "auto" may have landed on a different scheme than the one
                     # we came in with; record it so the entry stores what works.
                     self._auth_mode = tv.auth_mode or self._auth_mode
+                    # needs_authentication() only reflects an auth-required push
+                    # the TV has actually sent - and that only happens in
+                    # response to vidaa_app_connect (or, for tokenless
+                    # firmware, an ordinary request start_pairing() also
+                    # sends), never proactively right after connect. Checking
+                    # it before requesting pairing read as "already
+                    # authorized" for every never-paired TV - including plain
+                    # MQTT ones, which still show a PIN on first pairing and
+                    # only skip re-authenticating on *later* connects. Always
+                    # request pairing first; the TV replies either way (PIN
+                    # shown, or a bare ack when genuinely already authorized),
+                    # and only THEN does needs_authentication() reflect
+                    # reality.
+                    started = await tv.async_start_pairing(
+                        wait_for_pin=TIMEOUT_PIN_DIALOG
+                    )
                     # A TV that needs no authentication (already authorized, or
                     # older firmware with a fixed static login) never shows a
                     # PIN and rejects any code entered - so asking for one would
@@ -896,16 +912,11 @@ class VidaaTVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         await tv.async_disconnect()
                         self._pairing_tv = None
                         return await self._create_entry_from_current_state()
-                    # Wait for the TV to confirm the dialog is actually on
-                    # screen rather than assuming it appeared - otherwise we
-                    # ask for a PIN the user cannot see.
-                    pin_shown = await tv.async_start_pairing(
-                        wait_for_pin=TIMEOUT_PIN_DIALOG
-                    )
                     # Hold the connection for the authenticate step either way:
                     # an already-authorized TV shows no PIN, and the entered
                     # code still has to go over this same session.
                     self._pairing_tv = tv
+                    pin_shown = started
                     if not pin_shown:
                         _LOGGER.warning(
                             "TV at %s did not confirm the PIN dialog; showing "
