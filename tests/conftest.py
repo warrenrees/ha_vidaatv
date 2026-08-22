@@ -11,6 +11,8 @@ from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT
 from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
 
+from custom_components.vidaa_tv import DEFAULT_BRAND
+
 # Enable pytest-homeassistant-custom-component
 pytest_plugins = ["pytest_homeassistant_custom_component"]
 
@@ -194,7 +196,7 @@ def mock_vidaa_tv_offline() -> Generator[MagicMock, None, None]:
 def mock_config_flow_tv() -> Generator[MagicMock, None, None]:
     """Mock AsyncVidaaTV for config flow tests."""
     probe_device = MagicMock()
-    probe_device.brand = "his"
+    probe_device.brand = DEFAULT_BRAND
     probe_device.mac = "00:11:22:33:44:55"
     # Real values, not mocks: these land in entry.data, which HA serializes.
     probe_device.mac_ethernet = "00:11:22:33:44:55"
