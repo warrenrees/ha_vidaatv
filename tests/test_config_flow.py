@@ -34,6 +34,7 @@ from custom_components.vidaa_tv.const import (
     CONF_MAC_WIFI,
     DEFAULT_PORT,
     DOMAIN,
+    DEFAULT_BRAND,
 )
 
 from .conftest import MOCK_CONFIG_ENTRY_DATA, MOCK_DEVICE_INFO, create_mock_config_entry
@@ -255,7 +256,7 @@ async def test_pair_flow_success(
     assert result["data"][CONF_HOST] == "192.168.1.100"
     assert result["data"][CONF_DEVICE_ID] == "001122334455"
     # brand is resolved via UPnP probe on the manual path (mocked to "his")
-    assert result["data"][CONF_BRAND] == "his"
+    assert result["data"][CONF_BRAND] == DEFAULT_BRAND
 
 
 async def test_pair_flow_persists_discovered_brand(
@@ -636,7 +637,7 @@ async def test_validate_connection_device_id_resolution(
     from custom_components.vidaa_tv.config_flow import validate_connection
 
     probe_device = MagicMock(
-        brand="his",
+        brand=DEFAULT_BRAND,
         mac="00:11:22:33:44:55",
         mac_ethernet="00:11:22:33:44:55",
         mac_wifi="66:55:44:33:22:11",
@@ -652,7 +653,7 @@ async def test_validate_connection_device_id_resolution(
         tv.async_get_device_info = AsyncMock(return_value=device_info)
         tv.async_get_tv_info = AsyncMock(return_value=tv_info)
 
-        result = await validate_connection(hass, "192.168.1.100", DEFAULT_PORT)
+        result = await validate_connection(hass, "192.168.1.100", DEFAULT_PORT, DEFAULT_BRAND)
 
     assert result["device_id"] == expected_device_id
     assert result["device_id"] != "192.168.1.100"
@@ -677,7 +678,7 @@ async def test_validate_connection_reports_no_mac_when_probe_fails(
         tv.async_get_device_info = AsyncMock(return_value=MOCK_DEVICE_INFO)
         tv.async_get_tv_info = AsyncMock(return_value=None)
 
-        result = await validate_connection(hass, "192.168.1.100", DEFAULT_PORT)
+        result = await validate_connection(hass, "192.168.1.100", DEFAULT_PORT, DEFAULT_BRAND)
 
     assert result["mac"] is None
 
@@ -795,7 +796,7 @@ async def test_ssdp_brand_survives_a_mac_resolving_probe(
     with patch(
         "custom_components.vidaa_tv.config_flow.probe_ip",
         return_value=MagicMock(
-            brand="his", mac=None, mac_ethernet=None, mac_wifi=None
+            brand=DEFAULT_BRAND, mac=None, mac_ethernet=None, mac_wifi=None
         ),
     ):
         result = await hass.config_entries.flow.async_init(
@@ -885,7 +886,7 @@ async def test_static_auth_still_resolves_the_mac_for_wake_on_lan(
     """
     from custom_components.vidaa_tv.config_flow import validate_connection
 
-    probe_device = MagicMock(brand="his", mac="a0:62:fb:66:77:ca")
+    probe_device = MagicMock(brand=DEFAULT_BRAND, mac="a0:62:fb:66:77:ca")
     with patch(
         "custom_components.vidaa_tv.config_flow.AsyncVidaaTV", autospec=True
     ) as mock_class, patch(
@@ -899,7 +900,7 @@ async def test_static_auth_still_resolves_the_mac_for_wake_on_lan(
         tv.auth_mode = AUTH_MODE_STATIC
 
         result = await validate_connection(
-            hass, "192.168.1.100", DEFAULT_PORT, auth_mode=AUTH_MODE_STATIC
+            hass, "192.168.1.100", DEFAULT_PORT, DEFAULT_BRAND, auth_mode=AUTH_MODE_STATIC,
         )
 
     mock_probe.assert_called_once()
@@ -927,7 +928,7 @@ async def test_static_auth_reports_no_mac_rather_than_a_random_one(
         tv.auth_mode = AUTH_MODE_STATIC
 
         result = await validate_connection(
-            hass, "192.168.1.100", DEFAULT_PORT, auth_mode=AUTH_MODE_STATIC
+            hass, "192.168.1.100", DEFAULT_PORT, DEFAULT_BRAND, auth_mode=AUTH_MODE_STATIC,
         )
 
     assert result["mac"] is None
@@ -941,7 +942,7 @@ async def test_auto_auth_mode_still_probes_and_uses_dynamic(
     from custom_components.vidaa_tv.config_flow import validate_connection
 
     probe_device = MagicMock(
-        brand="his",
+        brand=DEFAULT_BRAND,
         mac="00:11:22:33:44:55",
         mac_ethernet="00:11:22:33:44:55",
         mac_wifi="66:55:44:33:22:11",
@@ -958,7 +959,7 @@ async def test_auto_auth_mode_still_probes_and_uses_dynamic(
         tv.async_get_tv_info = AsyncMock(return_value=None)
         tv.auth_mode = AUTH_MODE_DYNAMIC
 
-        result = await validate_connection(hass, "192.168.1.100", DEFAULT_PORT)
+        result = await validate_connection(hass, "192.168.1.100", DEFAULT_PORT, DEFAULT_BRAND)
 
     mock_probe.assert_called_once()
     assert mock_class.call_args.kwargs["use_dynamic_auth"] is True

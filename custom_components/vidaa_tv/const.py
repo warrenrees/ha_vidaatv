@@ -44,6 +44,7 @@ AUTH_MODES: Final = [AUTH_MODE_AUTO, AUTH_MODE_DYNAMIC, AUTH_MODE_STATIC]
 # Default values
 DEFAULT_PORT: Final = 36669
 DEFAULT_NAME: Final = "Hisense TV"
+DEFAULT_BRAND: Final = "his"
 DEFAULT_AUTH_MODE: Final = AUTH_MODE_AUTO
 # Most TVs speak MQTT over TLS; plain MQTT is the exception, so default to on.
 DEFAULT_USE_SSL: Final = True

@@ -31,6 +31,7 @@ from .const import (
     CONF_MAC_ETHERNET,
     CONF_MAC_WIFI,
     DEFAULT_AUTH_MODE,
+    DEFAULT_BRAND,
     DEFAULT_PORT,
     DEFAULT_USE_SSL,
     PLATFORMS,
@@ -77,7 +78,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: VidaaTVConfigEntry) -> b
     port = entry.data.get(CONF_PORT, DEFAULT_PORT)
     mac = entry.data.get(CONF_MAC)
     device_id = entry.data.get(CONF_DEVICE_ID)
-    brand = entry.data.get(CONF_BRAND, "his")
+    brand = entry.data.get(CONF_BRAND, DEFAULT_BRAND)
     certfile = entry.data.get(CONF_CERTFILE)
     keyfile = entry.data.get(CONF_KEYFILE)
     # Entries paired before this option existed default to SSL (their original
