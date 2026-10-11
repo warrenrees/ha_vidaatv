@@ -325,7 +325,7 @@ async def test_coordinator_turn_on_with_wol(
     mock_vidaa_tv: MagicMock,
     mock_wake_tv: MagicMock,
 ) -> None:
-    """Test coordinator turn_on sends WoL and power command."""
+    """Send WoL and confirm readiness without toggling an already awake TV."""
     entry = create_mock_config_entry(hass)
     entry.add_to_hass(hass)
 
@@ -341,8 +341,8 @@ async def test_coordinator_turn_on_with_wol(
 
     # Should send WoL
     mock_wake_tv.assert_called()
-    # Should send power on command
-    mock_vidaa_tv.async_power_on.assert_called()
+    mock_vidaa_tv.async_get_state.assert_awaited()
+    mock_vidaa_tv.async_power_on.assert_not_called()
 
 
 async def test_coordinator_turn_off(

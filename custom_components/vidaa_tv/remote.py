@@ -81,7 +81,7 @@ class VidaaTVRemote(CoordinatorEntity[VidaaTVDataUpdateCoordinator], RemoteEntit
             and not self._activities_probed
         ):
             self._activities_probed = True
-            self.hass.async_create_task(self._async_update_activities())
+            self.coordinator.async_create_task(self._async_update_activities())
         super()._handle_coordinator_update()
 
     async def _async_update_activities(self) -> None:
