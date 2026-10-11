@@ -214,8 +214,6 @@ async def validate_connection(
         device_info = await tv.async_get_device_info(timeout=5)
         tv_info = await tv.async_get_tv_info(timeout=5)
 
-        await tv.async_disconnect()
-
         result = {
             "name": DEFAULT_NAME,
             "model": None,
@@ -256,11 +254,9 @@ async def validate_connection(
 
     except Exception as err:
         _LOGGER.error("Error validating connection: %s", err)
-        try:
-            await tv.async_disconnect()
-        except Exception:
-            pass
         raise CannotConnect(str(err)) from err
+    finally:
+        await tv.async_close()
 
 
 class VidaaTVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -309,7 +305,7 @@ class VidaaTVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         async def _close() -> None:
             try:
-                await tv.async_disconnect()
+                await tv.async_close()
             except Exception as err:  # noqa: BLE001 - teardown is best effort
                 _LOGGER.debug("Closing abandoned pairing connection failed: %s", err)
 
@@ -751,7 +747,7 @@ class VidaaTVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 await asyncio.sleep(1)
                     except Exception as err:  # noqa: BLE001 - best effort
                         _LOGGER.debug("Post-auth device info fetch failed: %s", err)
-                    await tv.async_disconnect()
+                    await tv.async_close()
                     self._pairing_tv = None
 
                     if device_info:
@@ -774,7 +770,7 @@ class VidaaTVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 # from a plain rejection; timing distinguishes a rejection
                 # (fast) from no response (~full timeout).
                 authed = tv.is_authenticated
-                await tv.async_disconnect()
+                await tv.async_close()
                 self._pairing_tv = None
                 if not authed and auth_elapsed < 8:
                     _LOGGER.warning("TV rejected the PIN")
@@ -787,11 +783,15 @@ class VidaaTVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
                     errors["base"] = "no_auth_response"
 
+            except asyncio.CancelledError:
+                await tv.async_close()
+                self._pairing_tv = None
+                raise
             except Exception as err:
                 _LOGGER.exception("Error during pairing: %s", err)
                 errors["base"] = "pairing_failed"
                 try:
-                    await tv.async_disconnect()
+                    await tv.async_close()
                 except Exception:
                     pass
                 self._pairing_tv = None
@@ -857,6 +857,7 @@ class VidaaTVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 **auth_mode_kwargs(self._auth_mode),
             )
 
+            self._pairing_tv = tv
             pin_shown = False
             try:
                 connected = await tv.async_connect(timeout=TIMEOUT_CONNECT)
@@ -909,7 +910,7 @@ class VidaaTVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             )
                             if device_info.get("tv_name"):
                                 self._name = device_info.get("tv_name")
-                        await tv.async_disconnect()
+                        await tv.async_close()
                         self._pairing_tv = None
                         return await self._create_entry_from_current_state()
                     # Hold the connection for the authenticate step either way:
@@ -926,12 +927,18 @@ class VidaaTVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         pin_shown = True
                 else:
                     errors["base"] = "cannot_connect"
-                    await tv.async_disconnect()
+                    await tv.async_close()
+                    self._pairing_tv = None
+            except asyncio.CancelledError:
+                await tv.async_close()
+                self._pairing_tv = None
+                raise
             except Exception as err:
                 _LOGGER.warning("Could not trigger PIN dialog: %s", err)
                 errors["base"] = "cannot_connect"
+                self._pairing_tv = None
                 try:
-                    await tv.async_disconnect()
+                    await tv.async_close()
                 except Exception:
                     pass
 

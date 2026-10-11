@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import logging
 from datetime import timedelta
@@ -14,6 +15,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from pyvidaa import APPS
+from pyvidaa.client import AppListTimeoutError, AppNotFoundError
 from pyvidaa.wol import wake_tv
 from .const import (
     ACTIVITY_HOME,
@@ -57,16 +59,22 @@ class VidaaTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Initialize the coordinator."""
         # Get scan interval from options, with fallback to default
         scan_interval = entry.options.get("scan_interval", SCAN_INTERVAL)
+        self._online_update_interval = timedelta(seconds=scan_interval)
+        self._standby_update_interval = timedelta(seconds=min(scan_interval, 5))
 
         super().__init__(
             hass,
             _LOGGER,
             name=f"{DOMAIN}_{entry.entry_id}",
-            update_interval=timedelta(seconds=scan_interval),
+            update_interval=self._online_update_interval,
         )
         self.tv = tv
         self.entry = entry
         self._available = True
+        self._stopping = False
+        self._background_tasks = set()
+        self._connection_lock = asyncio.Lock()
+        self._power_lock = asyncio.Lock()
         self._device_info_fetched = False
         # Older firmware never answers getdeviceinfo. Each attempt costs the
         # full timeout, so give up after a few misses rather than paying it on
@@ -77,6 +85,25 @@ class VidaaTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Parsed device info (model, sw_version, name, ip, device_id) cached from
         # the TV's getdeviceinfo; entities build their DeviceInfo from this.
         self.device_data: dict[str, Any] = {}
+
+    def async_create_task(self, coroutine):
+        """Own entity probes so unloading can cancel and await all of them."""
+        if self._stopping:
+            coroutine.close()
+            return None
+        task = self.hass.async_create_task(coroutine)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
+
+    async def async_shutdown(self):
+        self._stopping = True
+        await super().async_shutdown()
+        tasks = list(self._background_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     @property
     def available(self) -> bool:
@@ -118,11 +145,11 @@ class VidaaTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.debug("No device info returned from TV yet")
             return
 
-        if not isinstance(info, dict):
-            # The library's request/response matching is not topic-correlated,
-            # so an unrelated push (a source list, a volume broadcast) can land
-            # here. Ignore it rather than raising out of the whole poll.
-            _LOGGER.debug("Ignoring non-dict device info: %r", info)
+        if not isinstance(info, dict) or not any(
+            key in info for key in ("model_name", "tv_version", "tv_name", "network_type")
+        ):
+            # Topic matching alone does not guarantee a useful device schema.
+            _LOGGER.debug("Ignoring invalid device info: %r", info)
             return
 
         self._device_info_misses = 0
@@ -144,8 +171,8 @@ class VidaaTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # applies device_data via DeviceInfo.
         device_registry = dr.async_get(self.hass)
         identifier = self.entry.data.get(CONF_DEVICE_ID) or self.entry.entry_id
-        device_entry = device_registry.async_get_device(
-            identifiers={(DOMAIN, identifier)}
+        device_entry = device_registry.async_get_device_by_identifier(
+            (DOMAIN, identifier), self.entry.entry_id
         )
         if device_entry:
             updates = {}
@@ -209,39 +236,35 @@ class VidaaTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "channel_number": None,
         }
 
+    async def _async_ensure_connected(self) -> bool:
+        """Share reconnects between the polling loop and an explicit wake."""
+        async with self._connection_lock:
+            if self._stopping:
+                return False
+            if self.tv.is_connected:
+                return True
+            self.update_interval = self._standby_update_interval
+            # Reset and connect are one coordinator operation: a concurrent
+            # poll must not reset the client that a wake just connected.
+            await self.tv.async_reset()
+            if not await self.tv.async_connect(timeout=2):
+                return False
+            self._device_info_fetched = False
+            self._device_info_misses = 0
+            self._device_info_unsupported = False
+            return True
+
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from TV."""
+        if self._stopping:
+            return self.data or self._powered_off_data()
         import time
         start = time.monotonic()
 
         try:
-            # Check connection
-            if not self.tv.is_connected:
-                _LOGGER.debug("TV disconnected, rebuilding client and reconnecting")
-                # Rebuild the client so saved-token status is re-evaluated; an
-                # expired access token is then refreshed from the refresh token
-                # rather than being replayed and rejected.
-                try:
-                    await self.tv.async_reset()
-                except Exception:
-                    pass
-                # Try to connect with longer timeout for wake-up scenarios
-                connected = await self.tv.async_connect(timeout=5)
-                if not connected:
-                    # A TV in standby takes its MQTT broker down with it, so
-                    # being unreachable is a power state, not a fetch failure.
-                    # Raising UpdateFailed here logged an error on every
-                    # power-off and dropped the remote entity to unavailable
-                    # for as long as the TV stayed off.
-                    _LOGGER.debug("TV is not reachable; reporting it as off")
-                    return self._powered_off_data()
-                _LOGGER.debug("Reconnect took %.2fs", time.monotonic() - start)
-                # A reconnect can mean the TV rebooted (e.g. a firmware update),
-                # so re-fetch device info to pick up a new firmware version -
-                # including on a TV we had given up asking.
-                self._device_info_fetched = False
-                self._device_info_misses = 0
-                self._device_info_unsupported = False
+            if not await self._async_ensure_connected():
+                _LOGGER.debug("TV is not reachable; reporting it as off")
+                return self._powered_off_data()
 
             self._available = True
 
@@ -267,6 +290,9 @@ class VidaaTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # purpose: fake_sleep_1 is what the TV sends while WAKING, so a
             # prefix match would report it off just as it is switched on.
             is_on = bool(state) and state.get("statetype") != STATE_FAKE_SLEEP
+            self.update_interval = (
+                self._online_update_interval if is_on else self._standby_update_interval
+            )
 
             # Get volume and mute status (only if TV is on)
             # Note: getvolume request may not work on all TVs, but volume is cached
@@ -411,7 +437,47 @@ class VidaaTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return targets
 
     async def async_turn_on(self) -> None:
-        """Turn TV on using WoL and power command."""
+        """Wake the TV and wait for readiness before returning to a script."""
+        task = self.async_create_task(self._async_wake())
+        if task is None:
+            raise HomeAssistantError("TV integration is stopping")
+        await task
+
+    _WAKE_TIMEOUT = 20
+    _WAKE_RETRY_INTERVAL = 0.5
+
+    async def _async_wake(self) -> None:
+        async with self._power_lock:
+            await self._async_send_wol()
+            power_sent = False
+            try:
+                # This is a deadline, not a fixed delay. Normally readiness
+                # returns in a few seconds, independent of the poll interval.
+                async with asyncio.timeout(self._WAKE_TIMEOUT):
+                    while not self._stopping:
+                        if await self._async_ensure_connected():
+                            state = await self.tv.async_get_state(timeout=2)
+                            kind = state.get("statetype") if state else None
+                            # fake_sleep_1 confirms waking, just as in normal
+                            # polling. Some firmware sends no launcher state
+                            # until a command actually changes the activity.
+                            if kind and kind != STATE_FAKE_SLEEP:
+                                break
+                            if kind == STATE_FAKE_SLEEP and not power_sent:
+                                # power_on rechecks the state before sending
+                                # KEY_POWER: WoL may already have woken it.
+                                power_sent = await self.tv.async_power_on()
+                        await asyncio.sleep(self._WAKE_RETRY_INTERVAL)
+                    else:
+                        raise HomeAssistantError("TV integration is stopping")
+            except TimeoutError as err:
+                raise HomeAssistantError(
+                    "TV did not become ready after the wake request; "
+                    "check its power and network connection"
+                ) from err
+            await self.async_request_refresh()
+
+    async def _async_send_wol(self) -> None:
         targets = self._wol_targets()
         if targets:
             # Derive a /24 broadcast subnet only for a real IPv4 host.
@@ -425,12 +491,12 @@ class VidaaTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "'wol_mac' in the integration options to enable wake-on-LAN."
             )
 
-        # Also send power on command
-        await self.tv.async_power_on()
-        await self.async_request_refresh()
-
     async def async_turn_off(self) -> None:
         """Turn TV off."""
+        async with self._power_lock:
+            await self._async_turn_off()
+
+    async def _async_turn_off(self) -> None:
         # KEY_POWER is a toggle, so the library's power_off() reads the state
         # first to avoid switching a sleeping TV back on. We already polled that
         # state, so send the key directly and skip a round-trip the TV can take
@@ -457,7 +523,7 @@ class VidaaTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         if sent is False:
             raise HomeAssistantError(
-                f"Could not send {description} to the TV - it is not reachable"
+                f"Could not send {description}: the connection is unavailable or MQTT rejected the command"
             )
 
     async def async_volume_up(self) -> None:
@@ -491,13 +557,21 @@ class VidaaTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_launch_app(self, app_name: str) -> None:
         """Launch app."""
-        self._check_sent(await self.tv.async_launch_app(app_name), f"app {app_name}")
+        try:
+            sent = await self.tv.async_launch_app(app_name)
+        except (AppNotFoundError, AppListTimeoutError) as err:
+            raise HomeAssistantError(str(err)) from err
+        self._check_sent(sent, f"app {app_name}")
         await self.async_request_refresh()
 
     async def async_get_apps(self) -> list[dict] | None:
         """Get available apps."""
+        if not self.tv.is_connected:
+            return None
         return await self.tv.async_get_apps()
 
     async def async_get_sources(self) -> list[dict] | None:
         """Get available sources."""
+        if not self.tv.is_connected:
+            return None
         return await self.tv.async_get_sources()

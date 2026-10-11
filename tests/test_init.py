@@ -106,7 +106,7 @@ async def test_async_unload_entry(
     await hass.async_block_till_done()
 
     assert result is True
-    mock_vidaa_tv.async_disconnect.assert_called_once()
+    mock_vidaa_tv.async_close.assert_awaited_once()
 
 
 async def test_send_key_service(

@@ -317,7 +317,7 @@ class VidaaTVMediaPlayer(CoordinatorEntity[VidaaTVDataUpdateCoordinator], MediaP
             and self._source_probe_attempts < MAX_SOURCE_PROBES
         ):
             self._source_probe_attempts += 1
-            self.hass.async_create_task(self._async_update_sources())
+            self.coordinator.async_create_task(self._async_update_sources())
         super()._handle_coordinator_update()
 
     async def _async_update_sources(self) -> None:

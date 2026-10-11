@@ -104,46 +104,57 @@ async def async_setup_entry(hass: HomeAssistant, entry: VidaaTVConfigEntry) -> b
         **auth_mode_kwargs(auth_mode),
     )
 
-    # Best-effort connect. The TV may be in deep sleep (Wake-on-LAN) — don't block
-    # setup on it, or the entities (including the power button that sends WoL) would
-    # never be created and the TV couldn't be turned on from Home Assistant.
+    coordinator = None
     try:
-        if not await tv.async_connect(timeout=10):
-            _LOGGER.warning(
-                "TV at %s is not reachable (it may be off); setting up anyway so it "
-                "can be woken from Home Assistant", host
-            )
-    except Exception as err:
-        _LOGGER.warning("Initial connect to TV at %s failed (it may be off): %s", host, err)
+        # Best-effort connect. The TV may be in deep sleep (Wake-on-LAN) — don't block
+        # setup on it, or the entities (including the power button that sends WoL) would
+        # never be created and the TV couldn't be turned on from Home Assistant.
+        try:
+            if not await tv.async_connect(timeout=10):
+                _LOGGER.info(
+                    "TV at %s is not reachable (it may be off); setting up anyway so it "
+                    "can be woken from Home Assistant", host
+                )
+        except Exception as err:
+            _LOGGER.warning("Initial connect to TV at %s failed (it may be off): %s", host, err)
 
-    # Create coordinator for data updates. Use async_refresh (not
-    # async_config_entry_first_refresh) so an unreachable TV doesn't abort setup;
-    # the coordinator reconnects on a later poll once the TV is on.
-    coordinator = VidaaTVDataUpdateCoordinator(hass, tv, entry)
-    await coordinator.async_refresh()
+        # Create coordinator for data updates. Use async_refresh (not
+        # async_config_entry_first_refresh) so an unreachable TV doesn't abort setup;
+        # the coordinator reconnects on a later poll once the TV is on.
+        coordinator = VidaaTVDataUpdateCoordinator(hass, tv, entry)
+        await coordinator.async_refresh()
 
-    # Store runtime data using the modern pattern
-    entry.runtime_data = VidaaTVRuntimeData(
-        coordinator=coordinator, tv=tv, options_snapshot=dict(entry.options)
-    )
-
-    # Set up platforms
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    # Register update listener for options
-    entry.async_on_unload(entry.add_update_listener(async_update_options))
-
-    # Backfill the TV's hardware MAC for entries paired before it was stored.
-    # Without it, Wake-on-LAN has nothing to aim at on TVs that never answer
-    # getdeviceinfo (older firmware does not), so the TV can be turned off from
-    # Home Assistant but not back on. Backgrounded: it must never delay setup,
-    # and it simply does nothing while the TV is unreachable.
-    if not entry.data.get(CONF_HW_MAC):
-        entry.async_create_background_task(
-            hass, _async_backfill_hw_mac(hass, entry), "vidaa_tv_hw_mac"
+        # Store runtime data using the modern pattern
+        entry.runtime_data = VidaaTVRuntimeData(
+            coordinator=coordinator, tv=tv, options_snapshot=dict(entry.options)
         )
 
-    return True
+        # Set up platforms
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+        # Register update listener for options
+        entry.async_on_unload(entry.add_update_listener(async_update_options))
+
+        # Backfill the TV's hardware MAC for entries paired before it was stored.
+        # Without it, Wake-on-LAN has nothing to aim at on TVs that never answer
+        # getdeviceinfo (older firmware does not), so the TV can be turned off from
+        # Home Assistant but not back on. Backgrounded: it must never delay setup,
+        # and it simply does nothing while the TV is unreachable.
+        if not entry.data.get(CONF_HW_MAC):
+            entry.async_create_background_task(
+                hass, _async_backfill_hw_mac(hass, entry), "vidaa_tv_hw_mac"
+            )
+
+        return True
+
+    except BaseException:
+        # Setup cancellation must also drain the executor and close its client.
+        try:
+            if coordinator is not None:
+                await coordinator.async_shutdown()
+        finally:
+            await tv.async_close()
+        raise
 
 
 async def _async_backfill_hw_mac(hass: HomeAssistant, entry: VidaaTVConfigEntry) -> None:
@@ -252,8 +263,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: VidaaTVConfigEntry) -> 
 
     if unload_ok:
         runtime_data = entry.runtime_data
-        if runtime_data.tv:
-            await runtime_data.tv.async_disconnect()
+        try:
+            await runtime_data.coordinator.async_shutdown()
+        finally:
+            if runtime_data.tv:
+                await runtime_data.tv.async_close()
 
     return unload_ok
 

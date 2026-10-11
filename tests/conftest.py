@@ -116,6 +116,7 @@ def mock_vidaa_tv() -> Generator[MagicMock, None, None]:
     # Connection methods
     mock_instance.async_connect = AsyncMock(return_value=True)
     mock_instance.async_disconnect = AsyncMock()
+    mock_instance.async_close = AsyncMock()
     mock_instance.async_reset = AsyncMock()
     mock_instance.is_connected = True
 
@@ -184,7 +185,9 @@ def mock_vidaa_tv_offline() -> Generator[MagicMock, None, None]:
     """Create a mock AsyncVidaaTV client that fails to connect."""
     mock_instance = MagicMock()
     mock_instance.async_connect = AsyncMock(return_value=False)
+    mock_instance.async_reset = AsyncMock()
     mock_instance.async_disconnect = AsyncMock()
+    mock_instance.async_close = AsyncMock()
     mock_instance.is_connected = False
 
     yield mock_instance
@@ -213,6 +216,7 @@ def mock_config_flow_tv() -> Generator[MagicMock, None, None]:
 
         mock_instance.async_connect = AsyncMock(return_value=True)
         mock_instance.async_disconnect = AsyncMock()
+        mock_instance.async_close = AsyncMock()
         mock_instance.async_get_device_info = AsyncMock(return_value=MOCK_DEVICE_INFO)
         mock_instance.async_get_tv_info = AsyncMock(
             return_value={"deviceid": "001122334455"}
