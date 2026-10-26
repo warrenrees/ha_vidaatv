@@ -36,3 +36,42 @@ launch_app:
             - disney
             - hulu
             - tubi
+
+type_text:
+  name: Type Text
+  description: >-
+    Type text into the TV's focused on-screen keyboard. A text field must
+    already be focused on the TV (its on-screen keyboard showing). Each
+    character is sent as its own keystroke.
+  fields:
+    text:
+      name: Text
+      description: The text to type.
+      required: true
+      example: hello world
+      selector:
+        text:
+    delay:
+      name: Delay
+      description: Seconds to wait between keystrokes. Increase this if characters get dropped.
+      required: false
+      default: 0.2
+      example: 0.2
+      selector:
+        number:
+          min: 0
+          max: 2
+          step: 0.05
+          unit_of_measurement: s
+          mode: box
+    clear_first:
+      name: Clear first
+      description: Number of backspaces to send before typing, to clear an existing value.
+      required: false
+      default: 0
+      example: 0
+      selector:
+        number:
+          min: 0
+          max: 100
+          mode: box

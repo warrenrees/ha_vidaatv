@@ -494,6 +494,17 @@ class VidaaTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._check_sent(await self.tv.async_launch_app(app_name), f"app {app_name}")
         await self.async_request_refresh()
 
+    async def async_type_text(
+        self, text: str, delay: float = 0.2, clear_first: int = 0
+    ) -> None:
+        """Type text into the TV's focused on-screen keyboard."""
+        self._check_sent(
+            await self.tv.async_send_text(
+                text, delay=delay, clear_first=clear_first
+            ),
+            "text",
+        )
+
     async def async_get_apps(self) -> list[dict] | None:
         """Get available apps."""
         return await self.tv.async_get_apps()

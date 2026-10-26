@@ -36,8 +36,12 @@ from .const import (
     PLATFORMS,
     SERVICE_SEND_KEY,
     SERVICE_LAUNCH_APP,
+    SERVICE_TYPE_TEXT,
     ATTR_KEY,
     ATTR_APP,
+    ATTR_TEXT,
+    ATTR_DELAY,
+    ATTR_CLEAR_FIRST,
 )
 from .coordinator import VidaaTVDataUpdateCoordinator
 
@@ -224,6 +228,39 @@ async def _async_setup_services(hass: HomeAssistant) -> None:
                     translation_placeholders={"error": str(err)},
                 ) from err
 
+    async def async_type_text(call: ServiceCall) -> None:
+        """Handle type_text service call.
+
+        Types the given text into whatever text field is focused on the TV
+        (its on-screen keyboard must be showing). The TV has no bulk-text
+        command, so each character is sent as its own keystroke.
+        """
+        text = call.data[ATTR_TEXT]
+        delay = call.data.get(ATTR_DELAY, 0.2)
+        clear_first = call.data.get(ATTR_CLEAR_FIRST, 0)
+
+        entries = hass.config_entries.async_entries(DOMAIN)
+        if not entries:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="no_tvs_configured",
+            )
+
+        for entry in entries:
+            if entry.state is not ConfigEntryState.LOADED:
+                continue
+            runtime_data: VidaaTVRuntimeData = entry.runtime_data
+            try:
+                await runtime_data.coordinator.async_type_text(
+                    text, delay=delay, clear_first=clear_first
+                )
+            except Exception as err:
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="command_failed",
+                    translation_placeholders={"error": str(err)},
+                ) from err
+
     # Only register services once
     if not hass.services.has_service(DOMAIN, SERVICE_SEND_KEY):
         hass.services.async_register(
@@ -242,6 +279,20 @@ async def _async_setup_services(hass: HomeAssistant) -> None:
             async_launch_app,
             schema=vol.Schema({
                 vol.Required(ATTR_APP): cv.string,
+            }),
+        )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_TYPE_TEXT):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_TYPE_TEXT,
+            async_type_text,
+            schema=vol.Schema({
+                vol.Required(ATTR_TEXT): cv.string,
+                vol.Optional(ATTR_DELAY, default=0.2): vol.Coerce(float),
+                vol.Optional(ATTR_CLEAR_FIRST, default=0): vol.All(
+                    vol.Coerce(int), vol.Range(min=0)
+                ),
             }),
         )
 

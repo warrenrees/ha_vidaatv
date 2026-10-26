@@ -66,10 +66,14 @@ SCAN_INTERVAL: Final = 30
 # Services
 SERVICE_SEND_KEY: Final = "send_key"
 SERVICE_LAUNCH_APP: Final = "launch_app"
+SERVICE_TYPE_TEXT: Final = "type_text"
 
 # Attributes
 ATTR_KEY: Final = "key"
 ATTR_APP: Final = "app"
+ATTR_TEXT: Final = "text"
+ATTR_DELAY: Final = "delay"
+ATTR_CLEAR_FIRST: Final = "clear_first"
 
 # States
 # The statetype a TV reports while in standby. Match it EXACTLY: the trailing

@@ -150,6 +150,27 @@ data:
 |-----------|------|----------|-------------|
 | `app` | string | Yes | App name (netflix, youtube, amazon, disney, hulu, tubi) |
 
+### vidaa_tv.type_text
+
+Type text into the TV's focused on-screen keyboard. A text field must already be
+focused on the TV (its on-screen keyboard showing) — for example a search box in
+an app. Each character is sent as its own keystroke, because the TV has no
+bulk-text command.
+
+```yaml
+service: vidaa_tv.type_text
+data:
+  text: the walking dead
+  clear_first: 0
+  delay: 0.2
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `text` | string | Yes | The text to type |
+| `delay` | float | No | Seconds between keystrokes (default `0.2`); increase if characters are dropped |
+| `clear_first` | int | No | Backspaces to send before typing, to clear an existing value (default `0`) |
+
 ## Example Automations
 
 ### Turn off TV at midnight

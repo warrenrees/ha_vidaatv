@@ -135,6 +135,24 @@
           "description": "The app to launch (e.g., netflix, youtube, amazon)"
         }
       }
+    },
+    "type_text": {
+      "name": "Type Text",
+      "description": "Type text into the TV's focused on-screen keyboard (its keyboard must be showing). Each character is sent as its own keystroke.",
+      "fields": {
+        "text": {
+          "name": "Text",
+          "description": "The text to type."
+        },
+        "delay": {
+          "name": "Delay",
+          "description": "Seconds to wait between keystrokes. Increase if characters get dropped."
+        },
+        "clear_first": {
+          "name": "Clear first",
+          "description": "Number of backspaces to send before typing, to clear an existing value."
+        }
+      }
     }
   },
   "selector": {
