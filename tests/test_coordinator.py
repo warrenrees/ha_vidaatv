@@ -688,3 +688,84 @@ async def test_device_info_ignores_a_non_dict_reply(
     coordinator = entry.runtime_data.coordinator
     assert coordinator.last_update_success is True
     assert coordinator.device_data == {}
+
+
+async def test_a_command_waits_for_a_reconnect_in_progress(
+    hass: HomeAssistant,
+    mock_vidaa_tv: MagicMock,
+) -> None:
+    """Regression: a command sent while the client was being rebuilt (a slow
+    wake-up after Wake-on-LAN, a launch_app right behind turn_on) let pyvidaa
+    build a second client. The orphan kept reconnecting with the same client id,
+    and the TV dropped both connections in turn every second until Home
+    Assistant was restarted."""
+    import asyncio
+
+    entry = create_mock_config_entry(hass)
+    entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.vidaa_tv.AsyncVidaaTV", return_value=mock_vidaa_tv
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    coordinator = entry.runtime_data.coordinator
+    events: list[str] = []
+    connect_started = asyncio.Event()
+    let_connect_finish = asyncio.Event()
+
+    async def slow_connect(*args, **kwargs) -> bool:
+        connect_started.set()
+        await let_connect_finish.wait()
+        events.append("connected")
+        mock_vidaa_tv.is_connected = True
+        return True
+
+    async def send_key(key: str) -> bool:
+        events.append(f"sent {key}")
+        return True
+
+    mock_vidaa_tv.is_connected = False
+    mock_vidaa_tv.async_connect = AsyncMock(side_effect=slow_connect)
+    mock_vidaa_tv.async_send_key = AsyncMock(side_effect=send_key)
+
+    refresh = hass.async_create_task(coordinator.async_refresh())
+    await asyncio.wait_for(connect_started.wait(), timeout=5)
+
+    command = hass.async_create_task(coordinator.async_send_key("KEY_OK"))
+    await asyncio.sleep(0.05)
+    # The command must not reach the client while it is being rebuilt.
+    mock_vidaa_tv.async_send_key.assert_not_called()
+
+    let_connect_finish.set()
+    await asyncio.wait_for(asyncio.gather(refresh, command), timeout=5)
+
+    assert events == ["connected", "sent KEY_OK"]
+
+
+async def test_a_command_that_triggers_a_reconnect_does_not_deadlock(
+    hass: HomeAssistant,
+    mock_vidaa_tv: MagicMock,
+) -> None:
+    """A command requests a refresh, and that refresh may need the connection
+    lock to reconnect: the command must have released it by then."""
+    import asyncio
+
+    entry = create_mock_config_entry(hass)
+    entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.vidaa_tv.AsyncVidaaTV", return_value=mock_vidaa_tv
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    coordinator = entry.runtime_data.coordinator
+    mock_vidaa_tv.is_connected = False
+    mock_vidaa_tv.async_connect.reset_mock()
+
+    await asyncio.wait_for(coordinator.async_volume_up(), timeout=5)
+
+    mock_vidaa_tv.async_volume_up.assert_called_once()
+    mock_vidaa_tv.async_connect.assert_called()

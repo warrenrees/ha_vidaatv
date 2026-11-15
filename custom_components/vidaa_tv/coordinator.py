@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import logging
 from datetime import timedelta
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -77,6 +79,15 @@ class VidaaTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Parsed device info (model, sw_version, name, ip, device_id) cached from
         # the TV's getdeviceinfo; entities build their DeviceInfo from this.
         self.device_data: dict[str, Any] = {}
+        # Held while the client is rebuilt and reconnected, and around every
+        # command. pyvidaa's AsyncVidaaTV creates its client lazily without a
+        # lock, so a command issued while a reconnect is under way (typically
+        # right after Wake-on-LAN, when the TV answers slowly) could build a
+        # second client. The one that is no longer referenced keeps
+        # auto-reconnecting with the same MQTT client id, and the TV then drops
+        # the two connections in turn every second until Home Assistant is
+        # restarted - every command failing with "not reachable" meanwhile.
+        self._connection_lock = asyncio.Lock()
 
     @property
     def available(self) -> bool:
@@ -217,25 +228,28 @@ class VidaaTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             # Check connection
             if not self.tv.is_connected:
-                _LOGGER.debug("TV disconnected, rebuilding client and reconnecting")
-                # Rebuild the client so saved-token status is re-evaluated; an
-                # expired access token is then refreshed from the refresh token
-                # rather than being replayed and rejected.
-                try:
-                    await self.tv.async_reset()
-                except Exception:
-                    pass
-                # Try to connect with longer timeout for wake-up scenarios
-                connected = await self.tv.async_connect(timeout=5)
-                if not connected:
-                    # A TV in standby takes its MQTT broker down with it, so
-                    # being unreachable is a power state, not a fetch failure.
-                    # Raising UpdateFailed here logged an error on every
-                    # power-off and dropped the remote entity to unavailable
-                    # for as long as the TV stayed off.
-                    _LOGGER.debug("TV is not reachable; reporting it as off")
-                    return self._powered_off_data()
-                _LOGGER.debug("Reconnect took %.2fs", time.monotonic() - start)
+                # No command may touch the client while it is being rebuilt
+                # (see _connection_lock).
+                async with self._connection_lock:
+                    _LOGGER.debug("TV disconnected, rebuilding client and reconnecting")
+                    # Rebuild the client so saved-token status is re-evaluated; an
+                    # expired access token is then refreshed from the refresh token
+                    # rather than being replayed and rejected.
+                    try:
+                        await self.tv.async_reset()
+                    except Exception:
+                        pass
+                    # Try to connect with longer timeout for wake-up scenarios
+                    connected = await self.tv.async_connect(timeout=5)
+                    if not connected:
+                        # A TV in standby takes its MQTT broker down with it, so
+                        # being unreachable is a power state, not a fetch failure.
+                        # Raising UpdateFailed here logged an error on every
+                        # power-off and dropped the remote entity to unavailable
+                        # for as long as the TV stayed off.
+                        _LOGGER.debug("TV is not reachable; reporting it as off")
+                        return self._powered_off_data()
+                    _LOGGER.debug("Reconnect took %.2fs", time.monotonic() - start)
                 # A reconnect can mean the TV rebooted (e.g. a firmware update),
                 # so re-fetch device info to pick up a new firmware version -
                 # including on a TV we had given up asking.
@@ -410,6 +424,17 @@ class VidaaTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             targets.append(":".join(flat[i:i + 2] for i in range(0, 12, 2)))
         return targets
 
+    async def _async_tv_call(
+        self, method: Callable[..., Awaitable[Any]], *args: Any
+    ) -> Any:
+        """Run a client call once no reconnect is in progress.
+
+        The lock is released before the caller requests a refresh: that refresh
+        may itself need the lock to reconnect.
+        """
+        async with self._connection_lock:
+            return await method(*args)
+
     async def async_turn_on(self) -> None:
         """Turn TV on using WoL and power command."""
         targets = self._wol_targets()
@@ -426,7 +451,7 @@ class VidaaTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
 
         # Also send power on command
-        await self.tv.async_power_on()
+        await self._async_tv_call(self.tv.async_power_on)
         await self.async_request_refresh()
 
     async def async_turn_off(self) -> None:
@@ -440,10 +465,10 @@ class VidaaTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
 
         if self.data:
-            await self.tv.async_send_key("KEY_POWER")
+            await self._async_tv_call(self.tv.async_send_key, "KEY_POWER")
         else:
             # No poll has succeeded yet, so let the library decide safely.
-            await self.tv.async_power_off()
+            await self._async_tv_call(self.tv.async_power_off)
         await self.async_request_refresh()
 
     @staticmethod
@@ -462,42 +487,42 @@ class VidaaTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_volume_up(self) -> None:
         """Increase volume."""
-        self._check_sent(await self.tv.async_volume_up(), "volume up")
+        self._check_sent(await self._async_tv_call(self.tv.async_volume_up), "volume up")
         await self.async_request_refresh()
 
     async def async_volume_down(self) -> None:
         """Decrease volume."""
-        self._check_sent(await self.tv.async_volume_down(), "volume down")
+        self._check_sent(await self._async_tv_call(self.tv.async_volume_down), "volume down")
         await self.async_request_refresh()
 
     async def async_mute(self) -> None:
         """Toggle mute."""
-        self._check_sent(await self.tv.async_mute(), "mute")
+        self._check_sent(await self._async_tv_call(self.tv.async_mute), "mute")
         await self.async_request_refresh()
 
     async def async_set_volume(self, volume: int) -> None:
         """Set volume level."""
-        self._check_sent(await self.tv.async_set_volume(volume), "volume")
+        self._check_sent(await self._async_tv_call(self.tv.async_set_volume, volume), "volume")
         await self.async_request_refresh()
 
     async def async_select_source(self, source: str) -> None:
         """Select input source."""
-        self._check_sent(await self.tv.async_set_source(source), f"source {source}")
+        self._check_sent(await self._async_tv_call(self.tv.async_set_source, source), f"source {source}")
         await self.async_request_refresh()
 
     async def async_send_key(self, key: str) -> None:
         """Send remote key."""
-        self._check_sent(await self.tv.async_send_key(key), key)
+        self._check_sent(await self._async_tv_call(self.tv.async_send_key, key), key)
 
     async def async_launch_app(self, app_name: str) -> None:
         """Launch app."""
-        self._check_sent(await self.tv.async_launch_app(app_name), f"app {app_name}")
+        self._check_sent(await self._async_tv_call(self.tv.async_launch_app, app_name), f"app {app_name}")
         await self.async_request_refresh()
 
     async def async_get_apps(self) -> list[dict] | None:
         """Get available apps."""
-        return await self.tv.async_get_apps()
+        return await self._async_tv_call(self.tv.async_get_apps)
 
     async def async_get_sources(self) -> list[dict] | None:
         """Get available sources."""
-        return await self.tv.async_get_sources()
+        return await self._async_tv_call(self.tv.async_get_sources)

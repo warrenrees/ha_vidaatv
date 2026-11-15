@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Every command failed with "not reachable", and the log filled with
+  `Disconnected ... (code 7 ...)` every second, until Home Assistant was
+  restarted.** A command issued while the coordinator was rebuilding and
+  reconnecting the client - typically an app launch right behind `turn_on`,
+  while the TV is still waking up and answers slowly - could make pyvidaa build
+  a second client, since `AsyncVidaaTV` creates its client lazily without a
+  lock. The unreferenced one kept auto-reconnecting with the same MQTT client
+  id, so the TV dropped the two connections in turn, forever: reloading the
+  entry did not stop the orphan, only a restart did. Reconnecting and commands
+  are now serialized by a lock in the coordinator; a command sent during a
+  reconnect simply waits for it to finish.
+
 ## [2.3.1] - 2026-08-10
 
 Requires `pyvidaa` 2.3.0, unchanged from 2.3.0.
