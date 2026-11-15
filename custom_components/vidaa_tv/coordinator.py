@@ -450,8 +450,19 @@ class VidaaTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "'wol_mac' in the integration options to enable wake-on-LAN."
             )
 
-        # Also send power on command
-        await self._async_tv_call(self.tv.async_power_on)
+        # Also send the power command, but only to a TV that is connected right
+        # now. KEY_POWER is a toggle: a power_on queued behind a reconnect (or
+        # behind a second turn_on) would reach the TV after Wake-on-LAN had
+        # already woken it, and switch it straight back off. A TV that is not
+        # connected could not receive the key anyway; Wake-on-LAN wakes it.
+        if self._connection_lock.locked():
+            _LOGGER.debug("Reconnect in progress; relying on Wake-on-LAN alone")
+        else:
+            async with self._connection_lock:
+                if self.tv.is_connected:
+                    await self.tv.async_power_on()
+                else:
+                    _LOGGER.debug("TV not connected; relying on Wake-on-LAN alone")
         await self.async_request_refresh()
 
     async def async_turn_off(self) -> None:

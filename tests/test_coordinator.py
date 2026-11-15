@@ -769,3 +769,76 @@ async def test_a_command_that_triggers_a_reconnect_does_not_deadlock(
 
     mock_vidaa_tv.async_volume_up.assert_called_once()
     mock_vidaa_tv.async_connect.assert_called()
+
+
+async def test_turn_on_does_not_queue_a_power_toggle_behind_a_reconnect(
+    hass: HomeAssistant,
+    mock_vidaa_tv: MagicMock,
+    mock_wake_tv: MagicMock,
+) -> None:
+    """KEY_POWER is a toggle. A power_on that waited for a reconnect reached the
+    TV after Wake-on-LAN had woken it and switched it straight back off; with an
+    app launch and a press on the power button in a row, the TV went on, off, on
+    and off again."""
+    import asyncio
+
+    entry = create_mock_config_entry(hass)
+    entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.vidaa_tv.AsyncVidaaTV", return_value=mock_vidaa_tv
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    coordinator = entry.runtime_data.coordinator
+    connect_started = asyncio.Event()
+    let_connect_finish = asyncio.Event()
+
+    async def slow_connect(*args, **kwargs) -> bool:
+        connect_started.set()
+        await let_connect_finish.wait()
+        mock_vidaa_tv.is_connected = True
+        return True
+
+    mock_vidaa_tv.is_connected = False
+    mock_vidaa_tv.async_connect = AsyncMock(side_effect=slow_connect)
+    mock_vidaa_tv.async_power_on.reset_mock()
+
+    refresh = hass.async_create_task(coordinator.async_refresh())
+    await asyncio.wait_for(connect_started.wait(), timeout=5)
+
+    turn_on = hass.async_create_task(coordinator.async_turn_on())
+    await asyncio.sleep(0.05)
+    let_connect_finish.set()
+    await asyncio.wait_for(asyncio.gather(refresh, turn_on), timeout=5)
+
+    mock_wake_tv.assert_called()
+    mock_vidaa_tv.async_power_on.assert_not_called()
+
+
+async def test_turn_on_relies_on_wake_on_lan_when_not_connected(
+    hass: HomeAssistant,
+    mock_vidaa_tv: MagicMock,
+    mock_wake_tv: MagicMock,
+) -> None:
+    """A disconnected TV cannot receive KEY_POWER: Wake-on-LAN alone wakes it."""
+    entry = create_mock_config_entry(hass)
+    entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.vidaa_tv.AsyncVidaaTV", return_value=mock_vidaa_tv
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    coordinator = entry.runtime_data.coordinator
+    mock_vidaa_tv.is_connected = False
+    mock_vidaa_tv.async_connect = AsyncMock(return_value=False)
+    mock_vidaa_tv.async_power_on.reset_mock()
+
+    await coordinator.async_turn_on()
+
+    mock_wake_tv.assert_called()
+    mock_vidaa_tv.async_power_on.assert_not_called()
+

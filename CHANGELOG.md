@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entry did not stop the orphan, only a restart did. Reconnecting and commands
   are now serialized by a lock in the coordinator; a command sent during a
   reconnect simply waits for it to finish.
+  `turn_on` only sends the power key to a TV that is connected at that
+  moment: `KEY_POWER` is a toggle, and a key queued behind a reconnect would
+  reach the TV after Wake-on-LAN had woken it and switch it straight back off.
+  A TV that is not connected could not receive the key anyway.
 
 ## [2.3.1] - 2026-08-10
 
